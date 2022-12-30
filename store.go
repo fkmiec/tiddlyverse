@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -270,13 +269,12 @@ func (s *fileStore) newReader(filename string) (io.ReadCloser, error) {
 func getWikiFolders(path string) ([]string, error) {
 	wikiFolders := []string{}
 
-	files, err := ioutil.ReadDir(path)
+	files, err := os.ReadDir(path)
 	if err != nil {
 		panic(err)
 	}
 
 	for _, file := range files {
-		fmt.Println(file.Name(), file.IsDir())
 		if file.IsDir() {
 			wikiFolders = append(wikiFolders, file.Name())
 		}
@@ -288,13 +286,12 @@ func getWikiFolders(path string) ([]string, error) {
 //Return a map of template names to slice of file path and description.
 func getWikiTemplates(path string) ([][]string, error) {
 	templates := map[string][]string{}
-	files, err := ioutil.ReadDir(path)
+	files, err := os.ReadDir(path)
 	if err != nil {
 		panic(err)
 	}
 
 	for _, file := range files {
-		fmt.Println(file.Name(), !file.IsDir())
 		var filename string
 		var templateName string
 		var parts []string
@@ -357,16 +354,13 @@ func createWikiFolder(wikiPath string, templateFilePath string) error {
 		return err
 	}
 	//Copy the designated template file to the new directory and rename as index.html
-	input, err := ioutil.ReadFile(templateFilePath)
+	input, err := os.ReadFile(templateFilePath)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
 	destinationFile := filepath.Join(wikiPath, "index.html")
-	err = ioutil.WriteFile(destinationFile, input, 0644)
+	err = os.WriteFile(destinationFile, input, 0644)
 	if err != nil {
-		fmt.Println("Error creating", destinationFile)
-		fmt.Println(err)
 		return err
 	}
 	//Create a tiddlers folder in the new directory

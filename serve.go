@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -88,12 +87,10 @@ func (hr *handlerRouter) getWikiList() [][]string {
 }
 
 func (hr *handlerRouter) getHandlerWithStore(wiki string) (*handlerWithStore, error) {
-	//wiki := strings.Split(r.URL.Path, "/")[1]
 	h, ok := hr.handlerWithStoreMap[wiki]
 	if !ok {
 		return nil, errors.New("No wiki found: " + wiki)
 	}
-	fmt.Println("handlerRouter.getHandlerWithStore. Wiki=", wiki, ", handler=", fmt.Sprintf("%T", h))
 	return h, nil
 }
 
@@ -113,7 +110,6 @@ func (hr *handlerRouter) index(w http.ResponseWriter, r *http.Request) {
 }
 
 func (hr *handlerRouter) favicon(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("FAVICON: ", r.URL.Path)
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -202,11 +198,11 @@ func (h *handlerWithStore) setCustomPath(wikiName string) error {
 	tid, err := h.Store.GetTiddler("$:/config/tiddlyweb/host")
 	if err != nil {
 		timestamp := time.Now().Format("20060102150405999")
-		tid := Tiddler{}
+		tid = Tiddler{}
 		tid["created"] = timestamp
 		tid["modified"] = timestamp
 		tid["title"] = "$:/config/tiddlyweb/host"
-		tid["text"] = "http://" + serverHostAndPort + "/" + wikiName + "/"
+		tid.setField("text", "http://"+serverHostAndPort+"/"+wikiName+"/")
 	} else {
 		tid.setField("text", "http://"+serverHostAndPort+"/"+wikiName+"/")
 	}
@@ -383,26 +379,12 @@ func createNewWiki(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler := &handlerWithStore{Store: store}
-	//fmt.Println("Adding handler: ", wikiName, " = ", fmt.Sprintf("%T", handler))
 	routeHandlers.addHandler(wikiName, handler)
 
 	//Enable custom path so TiddlyWiki doesn't request files relative to server root, but rather relative to this new wiki folder
 	//Write the system tiddler $:/config/tiddlyweb/host with the value http://<server host/port>/<wiki folder>/<new wiki name> into tiddlers folder.
 	handler.setCustomPath(wikiName)
-	/*
-		timestamp := start.Format("20060102150405999")
-		newTiddler := Tiddler{}
-		newTiddler["created"] = timestamp
-		newTiddler["modified"] = timestamp
-		newTiddler["title"] = "$:/config/tiddlyweb/host"
-		newTiddler["text"] = "http://" + serverHostAndPort + "/" + wikiName + "/"
 
-		if err := handler.Store.WriteTiddler(newTiddler); err != nil {
-			log.Error().Err(err).Msg("Unable to create new wiki. Failed to write custom path tiddler to store.")
-			http.Error(w, fmt.Sprintf("Unable to create new wiki. Failed to write custom path tiddler to store: %s", err.Error()), http.StatusInternalServerError)
-			return
-		}
-	*/
 	log.Info().
 		Dur("ellapsed", time.Since(start)).
 		Float64("ellapsed_min", time.Since(start).Minutes()).
@@ -415,7 +397,7 @@ func deleteWiki(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	wikiName := r.URL.Query().Get("name")
 	wikiPath := filepath.Join(serverStorageLocation, wikiName)
-	copyFolder(wikiPath, filepath.Join(serverTrashLocation, wikiPath)) //FIX THIS - This copies entire root directory structure (but not all the files) from / to the intended wiki folder.
+	copyFolder(wikiPath, filepath.Join(serverTrashLocation, wikiName)) //FIX THIS - This copies entire root directory structure (but not all the files) from / to the intended wiki folder.
 	deleteFolder(wikiPath)
 	delete(routeHandlers.handlerWithStoreMap, wikiName)
 	log.Info().
@@ -437,7 +419,7 @@ func (h *handlerWithStore) index(w http.ResponseWriter, r *http.Request) {
 		// Grab the tiddlers and clean them up
 		tids, err := h.Store.GetAllTiddlers()
 		if err != nil {
-			log.Error().Err(err).Msg("could not read tiddler from store")
+			log.Error().Err(err).Msg("could not read tiddlers from store")
 			http.Error(w, fmt.Sprintf("could not read tiddlers from store: %s", err.Error()), http.StatusInternalServerError)
 			return
 		}
@@ -446,6 +428,7 @@ func (h *handlerWithStore) index(w http.ResponseWriter, r *http.Request) {
 		rawMarkupTiddlers["body-top"] = make([]Tiddler, 0)
 		rawMarkupTiddlers["body-bottom"] = make([]Tiddler, 0)
 		for i, tid := range tids {
+
 			// This is here because the TiddlyWeb plugin will not issue a DELETE request if the tiddler is not in a bag
 			// https://github.com/Jermolene/TiddlyWiki5/blob/master/plugins/tiddlywiki/tiddlyweb/tiddlywebadaptor.js#L250-L253
 			if _, ok := tid["bag"]; !ok {
@@ -867,37 +850,6 @@ func basicAuthCtx(w http.ResponseWriter, r *http.Request, creds Credentials) (au
 	return auth, true
 }
 
-func getIPAddress() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-	// handle err
-	for _, i := range ifaces {
-		addrs, err := i.Addrs()
-		if err != nil {
-			return "", err
-		}
-		// handle err
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			// process IP address
-			if !ip.IsLoopback() {
-				if ip.To4() != nil {
-					return ip.String(), nil
-				}
-			}
-		}
-	}
-	return "", err
-}
-
 //Pass handlerMap to ListenAndServe from main.go.
 //handlerMap has to implement handlerWithStore interface and proxy calls to the correct handlerWithStore instance for each wiki
 func ListenAndServe(addr string, credentialsFile string, readers string, writers string, storageType string, storageLocation string) error {
@@ -921,17 +873,15 @@ func ListenAndServe(addr string, credentialsFile string, readers string, writers
 		}
 		//Temporary hack:  If no wiki folders under storageLocation, assume a default folder called "wiki"
 		//POSSIBLE FIX: default to storageLocation as it is today (one wiki), or add directory listing functions for Google and AWS
-		if len(wikiFolders) == 0 {
-			wikiFolders = append(wikiFolders, "wiki")
-		}
+		//if len(wikiFolders) == 0 {
+		//	wikiFolders = append(wikiFolders, "wiki")
+		//}
 		for _, wiki := range wikiFolders {
 			//Create a handlerWithStore for each wiki and add to routeHandlers.
 			wikiPath := filepath.Join(storageLocation, wiki)
-			fmt.Println("Wiki Path to STORE: ", storageLocation, "+", wiki, "=", wikiPath)
 			store, err = NewFileStore(wikiPath)
 			handler := &handlerWithStore{Store: store}
 			handler.setCustomPath(wiki)
-			fmt.Println("Adding handler: ", wiki, " = ", fmt.Sprintf("%T", handler))
 			routeHandlers.addHandler(wiki, handler)
 		}
 	case "gs":

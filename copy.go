@@ -1,9 +1,7 @@
 package tiddlybucket
 
 import (
-	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 )
@@ -37,31 +35,32 @@ func CopyFile(src, dst string) error {
 // Dir copies a whole directory recursively
 func CopyDir(src string, dst string) error {
 	var err error
-	var fds []os.FileInfo
+	var fds []os.DirEntry //FileInfo
 	var srcinfo os.FileInfo
 
 	if srcinfo, err = os.Stat(src); err != nil {
 		return err
 	}
 
-	if err = os.MkdirAll(dst, srcinfo.Mode()); err != nil {
+	if err = os.Mkdir(dst, srcinfo.Mode()); err != nil {
 		return err
 	}
 
-	if fds, err = ioutil.ReadDir(src); err != nil {
+	if fds, err = os.ReadDir(src); err != nil {
 		return err
 	}
+
 	for _, fd := range fds {
 		srcfp := path.Join(src, fd.Name())
 		dstfp := path.Join(dst, fd.Name())
 
 		if fd.IsDir() {
 			if err = CopyDir(srcfp, dstfp); err != nil {
-				fmt.Println(err)
+				return err
 			}
 		} else {
 			if err = CopyFile(srcfp, dstfp); err != nil {
-				fmt.Println(err)
+				return err
 			}
 		}
 	}

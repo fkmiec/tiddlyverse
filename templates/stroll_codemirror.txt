@@ -1,1 +1,0 @@
-TiddlyWiki 5.2.3 with Stroll (backlinks, relinking, autocomplete) and CodeMirror (editor styling)
