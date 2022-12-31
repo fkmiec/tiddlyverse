@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -38,6 +39,13 @@ type TiddlerStore interface {
 	GetAllTiddlers() ([]Tiddler, error)
 	WriteTiddler(t Tiddler) error
 	DeleteTiddler(title string) error
+	//Added below functions to support creation and management of multiple wikis
+	CreateRequiredFolders(path string) error
+	GetWikiList(path string) ([]string, error)
+	GetWikiTemplateList(path string) ([][]string, error)
+	CreateWikiFolder(wikiPath string, templateFilePath string) error
+	CopyFolder(srcPath string, targetPath string) error
+	DeleteFolder(path string) error
 }
 
 func tiddlerFilename(title string) string {
@@ -266,128 +274,6 @@ func (s *fileStore) newReader(filename string) (io.ReadCloser, error) {
 	return f, nil
 }
 
-func getWikiFolders(path string) ([]string, error) {
-	wikiFolders := []string{}
-
-	files, err := os.ReadDir(path)
-	if err != nil {
-		panic(err)
-	}
-
-	for _, file := range files {
-		if file.IsDir() {
-			wikiFolders = append(wikiFolders, file.Name())
-		}
-	}
-
-	return wikiFolders, nil
-}
-
-//Return a map of template names to slice of file path and description.
-func getWikiTemplates(path string) ([][]string, error) {
-	templates := map[string][]string{}
-	files, err := os.ReadDir(path)
-	if err != nil {
-		panic(err)
-	}
-
-	for _, file := range files {
-		var filename string
-		var templateName string
-		var parts []string
-		var values []string
-
-		if !file.IsDir() {
-			filename = file.Name()
-			parts = strings.Split(file.Name(), ".")
-			templateName = parts[0]
-			values = templates[templateName]
-			if values == nil {
-				values = make([]string, 2)
-				templates[templateName] = values
-			}
-			if parts[1] == "txt" {
-				//read in the description
-				f, err := os.Open(filepath.Join(path, filename))
-				if err != nil {
-					return nil, fmt.Errorf("could not open file '%s': %s", filename, err.Error())
-				}
-				reader := bufio.NewReader(f)
-				var descriptionBytes bytes.Buffer
-				for {
-					line, err := reader.ReadString('\n')
-					if err != nil && err != io.EOF {
-						log.Fatal().Str("line", line).Err(err).Msg("could not read line in template description file")
-					}
-					descriptionBytes.WriteString(line)
-					if err == io.EOF {
-						break
-					}
-				}
-				values[1] = descriptionBytes.String()
-			} else {
-				values[0] = filename
-			}
-		}
-	}
-	templateValues := make([][]string, len(templates))
-	i := 0
-	for k := range templates {
-		templateValues[i] = make([]string, 3)
-		templateValues[i][0] = k               //template name
-		templateValues[i][1] = templates[k][0] //template file
-		templateValues[i][2] = templates[k][1] //template description
-		i++
-	}
-	//Sort by template name
-	sort.SliceStable(templateValues, func(i, j int) bool {
-		return templateValues[i][0] < templateValues[j][0]
-	})
-
-	return templateValues, nil
-}
-
-func createWikiFolder(wikiPath string, templateFilePath string) error {
-	//Create a new directory under wiki folder with the provided name
-	err := os.Mkdir(wikiPath, 0700)
-	if err != nil {
-		return err
-	}
-	//Copy the designated template file to the new directory and rename as index.html
-	input, err := os.ReadFile(templateFilePath)
-	if err != nil {
-		return err
-	}
-	destinationFile := filepath.Join(wikiPath, "index.html")
-	err = os.WriteFile(destinationFile, input, 0644)
-	if err != nil {
-		return err
-	}
-	//Create a tiddlers folder in the new directory
-	err = os.Mkdir(filepath.Join(wikiPath, "tiddlers"), 0700)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func copyFolder(srcPath string, targetPath string) error {
-	//Create a new directory under targetPath folder with the provided name
-	err := CopyDir(srcPath, targetPath)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func deleteFolder(path string) error {
-	err := os.RemoveAll(path)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (s *fileStore) walk(f func(path string) error) error {
 	errors := make([]error, 0)
 	fileSystem := os.DirFS(s.tiddlersDir)
@@ -452,21 +338,189 @@ func (s *fileStore) DeleteTiddler(title string) error {
 	return nil
 }
 
-func NewFileStore(dir string) (TiddlerStore, error) {
+func (s *fileStore) CreateRequiredFolders(path string) error {
+	//Create wikis, templates and trash folders in the indicated storage location if they do not exist
+	var err error
+	wikisDirExists := false
+	templatesDirExists := false
+	trashDirExists := false
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			if file.Name() == "wikis" {
+				wikisDirExists = true
+			} else if file.Name() == "templates" {
+				templatesDirExists = true
+			} else if file.Name() == "trash" {
+				trashDirExists = true
+			}
+		}
+	}
+	if !wikisDirExists {
+		err = os.Mkdir(filepath.Join(path, "wikis"), 0700)
+		if err != nil {
+			return err
+		}
+	}
+	if !templatesDirExists {
+		err = os.Mkdir(filepath.Join(path, "templates"), 0700)
+		if err != nil {
+			return err
+		}
+	}
+	if !trashDirExists {
+		err = os.Mkdir(filepath.Join(path, "trash"), 0700)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *fileStore) GetWikiList(path string) ([]string, error) {
+	wikiFolders := []string{}
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			wikiFolders = append(wikiFolders, file.Name())
+		}
+	}
+
+	return wikiFolders, nil
+}
+
+//Return a map of template names to slice of file path and description.
+func (s *fileStore) GetWikiTemplateList(path string) ([][]string, error) {
+	templates := map[string][]string{}
+	files, err := os.ReadDir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, file := range files {
+		var filename string
+		var templateName string
+		var parts []string
+		var values []string
+
+		if !file.IsDir() {
+			filename = file.Name()
+			parts = strings.Split(file.Name(), ".")
+			templateName = parts[0]
+			values = templates[templateName]
+			if values == nil {
+				values = make([]string, 2)
+				templates[templateName] = values
+			}
+			if parts[1] == "txt" {
+				//read in the description
+				f, err := os.Open(filepath.Join(path, filename))
+				if err != nil {
+					return nil, fmt.Errorf("could not open file '%s': %s", filename, err.Error())
+				}
+				reader := bufio.NewReader(f)
+				var descriptionBytes bytes.Buffer
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil && err != io.EOF {
+						log.Fatal().Str("line", line).Err(err).Msg("could not read line in template description file")
+					}
+					descriptionBytes.WriteString(line)
+					if err == io.EOF {
+						break
+					}
+				}
+				values[1] = descriptionBytes.String()
+			} else {
+				values[0] = filename
+			}
+		}
+	}
+	templateValues := make([][]string, len(templates))
+	i := 0
+	for k := range templates {
+		templateValues[i] = make([]string, 3)
+		templateValues[i][0] = k               //template name
+		templateValues[i][1] = templates[k][0] //template file
+		templateValues[i][2] = templates[k][1] //template description
+		i++
+	}
+	//Sort by template name
+	sort.SliceStable(templateValues, func(i, j int) bool {
+		return templateValues[i][0] < templateValues[j][0]
+	})
+
+	return templateValues, nil
+}
+
+func (s *fileStore) CreateWikiFolder(wikiPath string, templateFilePath string) error {
+	//Create a new directory under wiki folder with the provided name
+	err := os.Mkdir(wikiPath, 0700)
+	if err != nil {
+		return err
+	}
+	//Copy the designated template file to the new directory and rename as index.html
+	input, err := os.ReadFile(templateFilePath)
+	if err != nil {
+		return err
+	}
+	destinationFile := filepath.Join(wikiPath, "index.html")
+	err = os.WriteFile(destinationFile, input, 0644)
+	if err != nil {
+		return err
+	}
+	//Create a tiddlers folder in the new directory
+	err = os.Mkdir(filepath.Join(wikiPath, "tiddlers"), 0700)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *fileStore) CopyFolder(srcPath string, targetPath string) error {
+	//Create a new directory under targetPath folder with the provided name
+	err := CopyDir(srcPath, targetPath)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *fileStore) DeleteFolder(path string) error {
+	err := os.RemoveAll(path)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func NewFileStore(dir string, requireIndex bool) (TiddlerStore, error) {
 	log.Info().Str("dir", dir).Msg("creating 'local filesystem' TiddlerStore")
 
 	s := new(fileStore)
 	s.baseDir = dir
 	s.tiddlersDir = filepath.Join(s.baseDir, "tiddlers")
 
-	// build the index
-	// if err := s.rebuildIndex(); err != nil {
-	index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
-	if err != nil {
-		return nil, err
+	if requireIndex { //Index for tiddlers and wiki index.html file not needed for handler that will solely manage wikis, templates and trash folders
+		// build the index
+		// if err := s.rebuildIndex(); err != nil {
+		index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
+		if err != nil {
+			return nil, err
+		}
+		s.tiddlerToFile = index
+		s.tiddlerCache = cache
 	}
-	s.tiddlerToFile = index
-	s.tiddlerCache = cache
 
 	return s, nil
 }
@@ -559,7 +613,37 @@ func (s *googleBucketStore) DeleteTiddler(title string) error {
 	return nil
 }
 
-func NewGoogleBucketStore(uri string) (TiddlerStore, error) {
+//Creates wikis, templates and trash folders at the specified wiki_location if not existing.
+func (s *googleBucketStore) CreateRequiredFolders(path string) error {
+	return errors.New("not yet implemented")
+}
+
+//Returns the list of existing wikis
+func (s *googleBucketStore) GetWikiList(path string) ([]string, error) {
+	return nil, errors.New("not yet implemented")
+}
+
+//Returns the list of existing wiki templates
+func (s *googleBucketStore) GetWikiTemplateList(path string) ([][]string, error) {
+	return nil, errors.New("not yet implemented")
+}
+
+//Creates the wiki folder, tiddlers folder and copies the relevant template wiki file to the wiki folder
+func (s *googleBucketStore) CreateWikiFolder(wikiPath string, templateFilePath string) error {
+	return errors.New("not yet implemented")
+}
+
+//Recursively copies a folder. Used to move a wiki and its tiddlers to the trash folder
+func (s *googleBucketStore) CopyFolder(srcPath string, targetPath string) error {
+	return errors.New("not yet implemented")
+}
+
+//Recursively deletes a folder and its contents. Used to remove a wiki folder from wikis after copying to trash.
+func (s *googleBucketStore) DeleteFolder(path string) error {
+	return errors.New("not yet implemented")
+}
+
+func NewGoogleBucketStore(uri string, requireIndex bool) (TiddlerStore, error) {
 	log.Info().Str("uri", uri).Msg("creating 'Google Cloud Storage' TiddlerStore")
 
 	var err error
@@ -583,14 +667,15 @@ func NewGoogleBucketStore(uri string) (TiddlerStore, error) {
 	}
 	s.bucketHandle = s.client.Bucket(s.bucket)
 
-	// build the index
-	index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
-	if err != nil {
-		return nil, err
+	if requireIndex { //Index not required for Store that will solely manage wikis, templates and trash folders
+		// build the index
+		index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
+		if err != nil {
+			return nil, err
+		}
+		s.tiddlerToFile = index
+		s.tiddlerCache = cache
 	}
-	s.tiddlerToFile = index
-	s.tiddlerCache = cache
-
 	return s, nil
 }
 
@@ -750,7 +835,37 @@ func (s *awsS3Store) DeleteTiddler(title string) error {
 	return nil
 }
 
-func NewAwsS3Store(uri string) (TiddlerStore, error) {
+//Creates wikis, templates and trash folders at the specified wiki_location if not existing.
+func (s *awsS3Store) CreateRequiredFolders(path string) error {
+	return errors.New("Not yet implemented!")
+}
+
+//Returns the list of existing wikis
+func (s *awsS3Store) GetWikiList(path string) ([]string, error) {
+	return nil, errors.New("Not yet implemented!")
+}
+
+//Returns the list of existing wiki templates
+func (s *awsS3Store) GetWikiTemplateList(path string) ([][]string, error) {
+	return nil, errors.New("Not yet implemented!")
+}
+
+//Creates the wiki folder, tiddlers folder and copies the relevant template wiki file to the wiki folder
+func (s *awsS3Store) CreateWikiFolder(wikiPath string, templateFilePath string) error {
+	return errors.New("Not yet implemented!")
+}
+
+//Recursively copies a folder. Used to move a wiki and its tiddlers to the trash folder
+func (s *awsS3Store) CopyFolder(srcPath string, targetPath string) error {
+	return errors.New("Not yet implemented!")
+}
+
+//Recursively deletes a folder and its contents. Used to remove a wiki folder from wikis after copying to trash.
+func (s *awsS3Store) DeleteFolder(path string) error {
+	return errors.New("Not yet implemented!")
+}
+
+func NewAwsS3Store(uri string, requireIndex bool) (TiddlerStore, error) {
 	log.Info().Str("uri", uri).Msg("creating 'AWS S3' TiddlerStore")
 
 	var err error
@@ -769,13 +884,14 @@ func NewAwsS3Store(uri string) (TiddlerStore, error) {
 	sess := session.Must(session.NewSession())
 	s.s3svc = s3.New(sess)
 
-	// build the index
-	index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
-	if err != nil {
-		return nil, err
+	if requireIndex { //Index not required for Store that will solely manage wikis, templates and trash folders
+		// build the index
+		index, cache, err := buildCacheAndIndex(s.walk, s.newReader)
+		if err != nil {
+			return nil, err
+		}
+		s.tiddlerToFile = index
+		s.tiddlerCache = cache
 	}
-	s.tiddlerToFile = index
-	s.tiddlerCache = cache
-
 	return s, nil
 }

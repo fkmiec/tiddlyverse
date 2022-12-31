@@ -1,7 +1,0 @@
-modified: 20221230183959141
-type: text/vnd.tiddlywiki
-revision: 0
-created: 20221230182954903
-title: $:/config/BrowserStorage/SaveFilter
-
-[all[]] -[is[shadow]!is[tiddler]] -[prefix[$:/state/popup/]] -[prefix[$:/temp/]] -[prefix[$:/HistoryList]]

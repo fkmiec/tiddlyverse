@@ -34,11 +34,12 @@ const (
 )
 
 var serverHostAndPort string
-var serverBasePath string
-var serverStorageType string
-var serverStorageLocation string
-var serverTrashLocation string
-var routeHandlers *handlerRouter
+var storageType string
+var storagePath string
+var wikisPath string
+var templatesPath string
+var trashPath string
+var handlerSelector *HandlerSelector
 
 type Credentials struct {
 	UserPasswordsClearText map[string]string
@@ -60,16 +61,80 @@ func (c Credentials) userCanWrite(user string, isAuthenticated bool) bool {
 	return false
 }
 
-type handlerRouter struct {
-	handlerWithStoreMap map[string]*handlerWithStore
+type HandlerSelector struct {
+	handlerMap map[string]*handlerWithStore
+	store      TiddlerStore
+	//indexCache, faviconCache                        *bytes.Buffer
 }
 
-func (hr *handlerRouter) getWikiList() [][]string {
+func NewHandlerSelector() (*HandlerSelector, error) {
+	var storeImpl TiddlerStore
+	var store TiddlerStore
+	var handlerSelector HandlerSelector
+	var err error
+	var storeFunc func(path string, requireIndex bool) (TiddlerStore, error)
+
+	switch storageType {
+
+	case "file":
+		//Create the HandlerSelector's TiddlerStore implementation, which will be used for operations on parent wiki folder, template and trash folders
+		storeFunc = NewFileStore
+		storeImpl, err = storeFunc(storagePath, false)
+		if err != nil {
+			return nil, err
+		}
+	case "gs":
+		storeFunc = NewGoogleBucketStore
+		storeImpl, err = storeFunc(wikisPath, false)
+		if err != nil {
+			return nil, err
+		}
+	case "s3":
+		storeFunc = NewAwsS3Store
+		storeImpl, err = storeFunc(wikisPath, false)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		err = fmt.Errorf("error: storage type not supported")
+	}
+	if err != nil {
+		log.Panic().Str("storage_type", storageType).Err(err).Msg("could not create TiddlerStore")
+	}
+
+	handlerSelector = HandlerSelector{
+		handlerMap: map[string]*handlerWithStore{},
+		store:      storeImpl,
+	}
+
+	//Create wikis, templates and trash folders if not already present
+	handlerSelector.store.CreateRequiredFolders(storagePath)
+
+	//Get list of directories in the wiki location. Each subdirectory hosts a separate wiki.
+	wikis, err := storeImpl.GetWikiList(wikisPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, wiki := range wikis {
+		//Create a handlerWithStore for each wiki and add to handlerSelector.
+		wikiPath := filepath.Join(wikisPath, wiki)
+		store, err = storeFunc(wikiPath, true)
+		if err != nil {
+			return nil, err
+		}
+		handler := &handlerWithStore{Store: store}
+		handler.setCustomPath(wiki)
+		handlerSelector.addHandler(wiki, handler)
+	}
+	return &handlerSelector, nil
+}
+
+func (hr *HandlerSelector) getWikiList() [][]string {
 	var description string
-	wikis := make([][]string, len(hr.handlerWithStoreMap))
+	wikis := make([][]string, len(hr.handlerMap))
 	i := 0
-	for name := range hr.handlerWithStoreMap {
-		tid, err := hr.handlerWithStoreMap[name].Store.GetTiddler("$:/SiteDescription")
+	for name := range hr.handlerMap {
+		tid, err := hr.handlerMap[name].Store.GetTiddler("$:/SiteDescription")
 		if err != nil {
 			description = "To include a description, add a tiddler titled $:/SiteDescription to the wiki"
 		} else {
@@ -86,19 +151,19 @@ func (hr *handlerRouter) getWikiList() [][]string {
 	return wikis
 }
 
-func (hr *handlerRouter) getHandlerWithStore(wiki string) (*handlerWithStore, error) {
-	h, ok := hr.handlerWithStoreMap[wiki]
+func (hr *HandlerSelector) getHandlerWithStore(wiki string) (*handlerWithStore, error) {
+	h, ok := hr.handlerMap[wiki]
 	if !ok {
 		return nil, errors.New("No wiki found: " + wiki)
 	}
 	return h, nil
 }
 
-func (hr *handlerRouter) addHandler(wiki string, handler *handlerWithStore) {
-	hr.handlerWithStoreMap[wiki] = handler
+func (hr *HandlerSelector) addHandler(wiki string, handler *handlerWithStore) {
+	hr.handlerMap[wiki] = handler
 }
 
-func (hr *handlerRouter) index(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) index(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -109,7 +174,7 @@ func (hr *handlerRouter) index(w http.ResponseWriter, r *http.Request) {
 	h.index(w, r)
 }
 
-func (hr *handlerRouter) favicon(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) favicon(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -120,7 +185,7 @@ func (hr *handlerRouter) favicon(w http.ResponseWriter, r *http.Request) {
 	h.favicon(w, r)
 }
 
-func (hr *handlerRouter) loginBasic(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) loginBasic(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -131,7 +196,7 @@ func (hr *handlerRouter) loginBasic(w http.ResponseWriter, r *http.Request) {
 	h.loginBasic(w, r)
 }
 
-func (hr *handlerRouter) status(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) status(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -142,7 +207,7 @@ func (hr *handlerRouter) status(w http.ResponseWriter, r *http.Request) {
 	h.status(w, r)
 }
 
-func (hr *handlerRouter) getSkinnyTiddlerList(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) getSkinnyTiddlerList(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -153,7 +218,7 @@ func (hr *handlerRouter) getSkinnyTiddlerList(w http.ResponseWriter, r *http.Req
 	h.getSkinnyTiddlerList(w, r)
 }
 
-func (hr *handlerRouter) getTiddler(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) getTiddler(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -164,7 +229,7 @@ func (hr *handlerRouter) getTiddler(w http.ResponseWriter, r *http.Request) {
 	h.getTiddler(w, r)
 }
 
-func (hr *handlerRouter) putTiddler(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) putTiddler(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -175,7 +240,7 @@ func (hr *handlerRouter) putTiddler(w http.ResponseWriter, r *http.Request) {
 	h.putTiddler(w, r)
 }
 
-func (hr *handlerRouter) deleteTiddler(w http.ResponseWriter, r *http.Request) {
+func (hr *HandlerSelector) deleteTiddler(w http.ResponseWriter, r *http.Request) {
 	wiki := chi.URLParam(r, "wiki")
 	h, err := hr.getHandlerWithStore(wiki)
 	if err != nil {
@@ -291,7 +356,7 @@ func serverRootIndex(w http.ResponseWriter, r *http.Request) {
 	pageBytes.WriteString("<h1>Welcome to your TiddlyWiki server</h1>")
 	pageBytes.WriteString("<p>This server hosts one or more TiddlyWiki wikis. Below is a list of the current wikis.")
 	pageBytes.WriteString("<p><table style='border:1'><tr><th>Wiki</th><th>Description</th><th>Action</th></tr>")
-	wikis := routeHandlers.getWikiList()
+	wikis := handlerSelector.getWikiList()
 	for _, wiki := range wikis {
 		//TODO - Finish the delete logic
 		pageBytes.WriteString("<tr><td><a href='" + wiki[0] + "')>" + wiki[0] + "</a></td><td>" + wiki[1] + "</td><td><a href='javascript:deleteWiki(\"" + wiki[0] + "\")'>Delete</a></td></tr>")
@@ -327,7 +392,7 @@ func addWiki(w http.ResponseWriter, r *http.Request) {
 	pageBytes.WriteString("<p>Confirm or update the name of the new wiki and then click the chosen template for the wiki. Clicking the template link will initiate creation and redirect you to your new wiki.")
 	pageBytes.WriteString("<p><span><b>Wiki Name: </b></span><input type='text' id='wikiname' value='MyNewWiki'/>")
 	pageBytes.WriteString("<p><table style='border:1'><tr><th>Template</th><th>Description</th></tr>")
-	templates, err := getWikiTemplates(filepath.Join(serverBasePath, "templates"))
+	templates, err := handlerSelector.store.GetWikiTemplateList(templatesPath)
 	if err != nil {
 		log.Warn().Err(err).Msg("Error processing templates for the addWiki page.")
 		http.Redirect(w, r, "/", http.StatusInternalServerError)
@@ -368,18 +433,18 @@ func createNewWiki(w http.ResponseWriter, r *http.Request) {
 
 	wikiName := r.URL.Query().Get("name")
 	templateFilename := r.URL.Query().Get("template")
-	wikiPath := filepath.Join(serverStorageLocation, wikiName)
-	templateFilePath := filepath.Join(serverBasePath, "templates", templateFilename)
-	createWikiFolder(wikiPath, templateFilePath)
+	wikiPath := filepath.Join(wikisPath, wikiName)
+	templateFilePath := filepath.Join(templatesPath, templateFilename)
+	handlerSelector.store.CreateWikiFolder(wikiPath, templateFilePath)
 
-	store, err := NewFileStore(wikiPath)
+	store, err := NewFileStore(wikiPath, true)
 	if err != nil {
 		log.Error().Err(err).Msg("Unable to create new wiki. Failed to create new store.")
 		http.Error(w, fmt.Sprintf("Unable to create new wiki. Failed to create new store: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
 	handler := &handlerWithStore{Store: store}
-	routeHandlers.addHandler(wikiName, handler)
+	handlerSelector.addHandler(wikiName, handler)
 
 	//Enable custom path so TiddlyWiki doesn't request files relative to server root, but rather relative to this new wiki folder
 	//Write the system tiddler $:/config/tiddlyweb/host with the value http://<server host/port>/<wiki folder>/<new wiki name> into tiddlers folder.
@@ -396,10 +461,10 @@ func createNewWiki(w http.ResponseWriter, r *http.Request) {
 func deleteWiki(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	wikiName := r.URL.Query().Get("name")
-	wikiPath := filepath.Join(serverStorageLocation, wikiName)
-	copyFolder(wikiPath, filepath.Join(serverTrashLocation, wikiName)) //FIX THIS - This copies entire root directory structure (but not all the files) from / to the intended wiki folder.
-	deleteFolder(wikiPath)
-	delete(routeHandlers.handlerWithStoreMap, wikiName)
+	wikiPath := filepath.Join(wikisPath, wikiName)
+	handlerSelector.store.CopyFolder(wikiPath, filepath.Join(trashPath, wikiName)) //FIX THIS - This copies entire root directory structure (but not all the files) from / to the intended wiki folder.
+	handlerSelector.store.DeleteFolder(wikiPath)
+	delete(handlerSelector.handlerMap, wikiName)
 	log.Info().
 		Dur("ellapsed", time.Since(start)).
 		Float64("ellapsed_min", time.Since(start).Minutes()).
@@ -850,120 +915,6 @@ func basicAuthCtx(w http.ResponseWriter, r *http.Request, creds Credentials) (au
 	return auth, true
 }
 
-//Pass handlerMap to ListenAndServe from main.go.
-//handlerMap has to implement handlerWithStore interface and proxy calls to the correct handlerWithStore instance for each wiki
-func ListenAndServe(addr string, credentialsFile string, readers string, writers string, storageType string, storageLocation string) error {
-
-	var store TiddlerStore
-	var err error
-
-	serverHostAndPort = addr
-	serverBasePath = filepath.Dir(storageLocation)
-	serverTrashLocation = filepath.Join(serverBasePath, "trash") //Trash location for deleted wikis. Purge after some number of days.
-	serverStorageType = storageType
-	serverStorageLocation = storageLocation
-	routeHandlers = &handlerRouter{handlerWithStoreMap: map[string]*handlerWithStore{}}
-
-	switch storageType {
-	case "file":
-		//Get list of directories in the wiki location. Each subdirectory hosts a separate wiki.
-		wikiFolders, err := getWikiFolders(storageLocation)
-		if err != nil {
-			return err
-		}
-		//Temporary hack:  If no wiki folders under storageLocation, assume a default folder called "wiki"
-		//POSSIBLE FIX: default to storageLocation as it is today (one wiki), or add directory listing functions for Google and AWS
-		//if len(wikiFolders) == 0 {
-		//	wikiFolders = append(wikiFolders, "wiki")
-		//}
-		for _, wiki := range wikiFolders {
-			//Create a handlerWithStore for each wiki and add to routeHandlers.
-			wikiPath := filepath.Join(storageLocation, wiki)
-			store, err = NewFileStore(wikiPath)
-			handler := &handlerWithStore{Store: store}
-			handler.setCustomPath(wiki)
-			routeHandlers.addHandler(wiki, handler)
-		}
-	case "gs":
-		//TODO Get list of directories in the wiki location. Each subdirectory hosts a separate wiki.
-		//wikiFolders, err := getWikiFolders(storageLocation)
-		//if err != nil {
-		//	return err
-		//}
-		//for _, wiki := range wikiFolders {
-		//Create a handlerWithStore for each wiki and add to routeHandlers.
-		//store, err = NewGoogleBucketStore(filepath.Join(storageLocation, wiki))
-		store, err = NewGoogleBucketStore(storageLocation)
-		handler := &handlerWithStore{Store: store}
-		routeHandlers.addHandler("wiki", handler)
-		//}
-	case "s3":
-		//TODO Get list of directories in the wiki location. Each subdirectory hosts a separate wiki.
-		//wikiFolders, err := getWikiFolders(storageLocation)
-		//if err != nil {
-		//	return err
-		//}
-		//for _, wiki := range wikiFolders {
-		//Create a handlerWithStore for each wiki and add to routeHandlers.
-		//store, err = NewAwsS3Store(filepath.Join(storageLocation, wiki))
-		store, err = NewAwsS3Store(storageLocation)
-		handler := &handlerWithStore{Store: store}
-		routeHandlers.addHandler("wiki", handler)
-		//}
-	default:
-		err = fmt.Errorf("error: storage type not supported")
-	}
-	if err != nil {
-		log.Panic().Str("storage_type", storageType).Err(err).Msg("could not create TiddlerStore")
-	}
-
-	// Identify credentials, if applicable
-	insecureCreds, err := creds(store, credentialsFile, readers, writers)
-	if err != nil {
-		log.Panic().Str("credentials file", credentialsFile).Err(err).Msg("unable to process credentials")
-	}
-
-	r := chi.NewRouter()
-	r.Use(zerologger(log.Logger))
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			auth, ok := basicAuthCtx(w, r, insecureCreds)
-			if !ok {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "auth", auth)))
-		})
-	})
-	r.Use(middleware.Compress(5, "text/html", "text/css", "text/javascript"))
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.SetHeader("Connection", "keep-alive"))
-	r.Use(middleware.SetHeader("Keep-Alive", "timeout=5"))
-
-	r.Get("/", serverRootIndex)                            //Load the root index.html page that lists the wikis served by this server and instructs on how to create new ones.
-	r.Get("/addWiki", addWiki)                             //Display a page to enable user to create a new wiki from a template.
-	r.Get("/createNewWiki", createNewWiki)                 //Create the new wiki with name (required) and template (default server edition if omitted).
-	r.Get("/deleteWiki", deleteWiki)                       //Delete a wiki. Confirm deletion. Copy to purgatory for some period of time to allow for recovery.
-	r.Get("/{wiki}/login-basic", routeHandlers.loginBasic) //Keep this the same for now. Assume single user. After multiple wikis, consider support for multiple users.
-	r.Get("/{wiki}", routeHandlers.index)                  //Use a named parameter to serve the index for the designated wiki. e.g. "/{wikifolder}". Enable create wiki if does not exist.
-	r.Get("/{wiki}/favicon.ico", routeHandlers.favicon)    //Use a named parameter. e.g. "/{wikifolder}/favicon.ico"
-
-	r.Group(func(r chi.Router) {
-		r.Use(render.SetContentType(render.ContentTypeJSON))
-
-		r.Get("/{wiki}/status", routeHandlers.status) //Use a named parameter.
-
-		r.Get("/{wiki}/recipes/{recipe}/tiddlers.json", routeHandlers.getSkinnyTiddlerList) //Use a named parameter. e.g. "/{wikifolder}/recipes/{recipe}/tiddlers.json"
-		r.Get("/{wiki}/recipes/{recipe}/tiddlers/*", routeHandlers.getTiddler)              //Use a named parameter.
-		r.Put("/{wiki}/recipes/{recipe}/tiddlers/*", routeHandlers.putTiddler)              //Use a named parameter.
-		r.Delete("/{wiki}/bags/{bag}/tiddlers/*", routeHandlers.deleteTiddler)              //Use a named parameter.
-	})
-
-	log.Info().Str("addr", addr).Msg("starting server")
-	return http.ListenAndServe(serverHostAndPort, r)
-}
-
 func creds(store TiddlerStore, credentialsFile, readers, writers string) (Credentials, error) {
 	var insecureCreds Credentials
 	insecureCreds.UserPasswordsClearText = make(map[string]string)
@@ -1004,4 +955,69 @@ func creds(store TiddlerStore, credentialsFile, readers, writers string) (Creden
 	}
 
 	return insecureCreds, nil
+}
+
+//Pass handlerMap to ListenAndServe from main.go.
+//handlerMap has to implement handlerWithStore interface and proxy calls to the correct handlerWithStore instance for each wiki
+func ListenAndServe(addr string, credentialsFile string, readers string, writers string, storeType string, storageLocation string) error {
+
+	var store TiddlerStore
+	var err error
+
+	serverHostAndPort = addr
+	storageType = storeType
+	storagePath = storageLocation
+	trashPath = filepath.Join(storagePath, "trash")         //Trash folder for deleted wikis. Purge after some number of days.
+	templatesPath = filepath.Join(storagePath, "templates") //Templates folder for different "editions" of TiddlyWiki index.html files
+	wikisPath = filepath.Join(storagePath, "wikis")         //Parent folder for all wikis
+	handlerSelector, err = NewHandlerSelector()
+	if err != nil {
+		log.Panic().Str("handler selector", credentialsFile).Err(err).Msg("unable to create handler selector for given storage type and location")
+	}
+
+	// Identify credentials, if applicable
+	insecureCreds, err := creds(store, credentialsFile, readers, writers)
+	if err != nil {
+		log.Panic().Str("credentials file", credentialsFile).Err(err).Msg("unable to process credentials")
+	}
+
+	r := chi.NewRouter()
+	r.Use(zerologger(log.Logger))
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth, ok := basicAuthCtx(w, r, insecureCreds)
+			if !ok {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "auth", auth)))
+		})
+	})
+	r.Use(middleware.Compress(5, "text/html", "text/css", "text/javascript"))
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.SetHeader("Connection", "keep-alive"))
+	r.Use(middleware.SetHeader("Keep-Alive", "timeout=5"))
+
+	r.Get("/", serverRootIndex)                              //Load the root index.html page that lists the wikis served by this server and instructs on how to create new ones.
+	r.Get("/addWiki", addWiki)                               //Display a page to enable user to create a new wiki from a template.
+	r.Get("/createNewWiki", createNewWiki)                   //Create the new wiki with name (required) and template (default server edition if omitted).
+	r.Get("/deleteWiki", deleteWiki)                         //Delete a wiki. Confirm deletion. Copy to purgatory for some period of time to allow for recovery.
+	r.Get("/{wiki}/login-basic", handlerSelector.loginBasic) //Keep this the same for now. Assume single user. After multiple wikis, consider support for multiple users.
+	r.Get("/{wiki}", handlerSelector.index)                  //Use a named parameter to serve the index for the designated wiki. e.g. "/{wikifolder}". Enable create wiki if does not exist.
+	r.Get("/{wiki}/favicon.ico", handlerSelector.favicon)    //Use a named parameter. e.g. "/{wikifolder}/favicon.ico"
+
+	r.Group(func(r chi.Router) {
+		r.Use(render.SetContentType(render.ContentTypeJSON))
+
+		r.Get("/{wiki}/status", handlerSelector.status) //Use a named parameter.
+
+		r.Get("/{wiki}/recipes/{recipe}/tiddlers.json", handlerSelector.getSkinnyTiddlerList) //Use a named parameter. e.g. "/{wikifolder}/recipes/{recipe}/tiddlers.json"
+		r.Get("/{wiki}/recipes/{recipe}/tiddlers/*", handlerSelector.getTiddler)              //Use a named parameter.
+		r.Put("/{wiki}/recipes/{recipe}/tiddlers/*", handlerSelector.putTiddler)              //Use a named parameter.
+		r.Delete("/{wiki}/bags/{bag}/tiddlers/*", handlerSelector.deleteTiddler)              //Use a named parameter.
+	})
+
+	log.Info().Str("addr", addr).Msg("starting server")
+	return http.ListenAndServe(serverHostAndPort, r)
 }
