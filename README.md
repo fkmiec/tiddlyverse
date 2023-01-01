@@ -29,7 +29,7 @@ Execute `./tiddlyverse --host <hostname or ip address> <wiki_location>`
 - `--port <port>` 
 - Various readers, writers and credentials parameters supported by TiddlyBucket (NOTE - These parameters and features have not been tested on this fork of the codebase)
 - Minimum requirement is to specify a host and a wiki_location as shown above
-  - The `host` parameter is required to enable multiple wikis from the same server using a separate path for each wiki. A tiddler called `$:/config/tiddlyweb/host` with the host value is added to each wiki's tiddlers folder to let TiddlyWiki know that relative path URLs are relative to the full path specified and not just the host:port.
+  - The `host` parameter is required to enable multiple wikis from the same server using a separate path for each wiki. A tiddler called **$:/config/tiddlyweb/host** with the host value is added to each wiki's tiddlers folder to let TiddlyWiki know that relative path URLs are relative to the full path specified and not just the host:port.
   - The `wiki_location` is the top-level storage folder. It will contain three folders: 
     - **wikis** - where wikis are stored
     - **templates** - where template wikis are stored
@@ -43,11 +43,11 @@ The directory structure under the dist folder in the repo represents the require
 
 ![Directory Structure](/assets/images/directories.png)
 
-After executing the command to start the server, navigate to the server root (e.g. http://127.0.0.1:8080) and you'll be presented with a welcome page and an empty list of wikis. From there, you can create your first wiki by clicking on the link at the bottom of the page. 
+After executing the command to start the server, navigate to the server root (e.g. `http://127.0.0.1:8080`) and you'll be presented with a welcome page and an empty list of wikis. From there, you can create your first wiki by clicking on the link at the bottom of the page. 
 
 ![Home Start](/assets/images/home_start.png)
 
-The Add Wiki page lists your available template files and prompts you to provide a name for your wiki. The name will be part of the URL path after it is created (e.g. http://127.0.0.1:8080/MyNewWiki). 
+The Add Wiki page lists your available template files and prompts you to provide a name for your wiki. The name will be part of the URL path after it is created (e.g. `http://127.0.0.1:8080/MyNewWiki`). 
 
 ![Create Wiki](/assets/images/create_wiki.png)
 
@@ -55,7 +55,7 @@ After clicking the template link to create the new wiki, you'll be redirected to
 
 ![New Wiki](/assets/images/new_wiki.png)
 
-You may wish to add a tiddler called $:/SiteDescription with a short description for your new wiki. It will be used for the description in the list of wikis on the welcome page. 
+You may wish to add a tiddler called **$:/SiteDescription** with a short description for your new wiki. It will be used for the description in the list of wikis on the welcome page. 
 
 ![Home End](/assets/images/home_end.png)
 
