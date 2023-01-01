@@ -9,7 +9,7 @@ The name Tiddlyverse is a play on universe or multiverse, emphasizing the capabi
   - Each wiki is given a unique path off of the server root. For example, the wiki "~MyWiki" will be at `http://<host>:<port>/MyWiki`. 
 - A landing page at the server root listing all current wikis
   - A link to each wiki
-  - An link to delete a wiki. The delete action is confirmed and the wiki is moved to the "trash" folder on the server. At present, there is no automatic deletion by the server, so you would have to delete it manually. Eventually, the idea is to hold it for some number of days and then purge. 
+  - A link to delete a wiki. The delete action is confirmed and the wiki is moved to the "trash" folder on the server. At present, there is no automatic deletion by the server, so you would have to delete it manually. Eventually, the idea is to hold it for some number of days and then purge. 
 - A page for creating a new wiki from a template
   - A template is a TiddlyWiki HTML file with any plugins or content tiddlers that you want to be part of the foundation for a wiki. All subsequent tiddlers will be saved individually in the wiki folder on the server.
 
@@ -37,17 +37,41 @@ Execute `./tiddlyverse --host <hostname or ip address> <wiki_location>`
 
 The "dist" folder in the repo includes a templates directory with a couple of sample templates. You can copy that dist folder to wherever you want to locate your wikis and specify that dist folder as the wiki_location on the command line. 
 
-# Templates
+### What you'll see
 
-You can an should create your own templates, but I've included two as a starting point, including one loaded with many plugins I find useful. 
+The directory structure under the dist folder in the repo represents the required directory structure for Tiddlyverse. 
+
+![Directory Structure](/assets/images/directories.png)
+
+After executing the command to start the server, navigate to the server root (e.g. http://127.0.0.1:8080) and you'll be presented with a welcome page and an empty list of wikis. From there, you can create your first wiki by clicking on the link at the bottom of the page. 
+
+![Home Start](/assets/images/home_start.png)
+
+The Add Wiki page lists your available template files and prompts you to provide a name for your wiki. The name will be part of the URL path after it is created (e.g. http://127.0.0.1:8080/MyNewWiki). 
+
+![Create Wiki](/assets/images/create_wiki.png)
+
+After clicking the template link to create the new wiki, you'll be redirected to the newly created wiki. 
+
+![New Wiki](/assets/images/new_wiki.png)
+
+You may wish to add a tiddler called $:/SiteDescription with a short description for your new wiki. It will be used for the description in the list of wikis on the welcome page. 
+
+![Home End](/assets/images/home_end.png)
+
+In the listing of wikis, you'll notice a Delete link. You may delete a wiki by clicking that link. It will ask you to confirm and upon confirmation, it will move the wiki to the trash directory. This gives you the chance to change your mind or salvage some tiddlers you may have forgotten you needed. You can permanently delete it later manually on the server. Eventually, I'll add an option to delete after some configurable number of days. 
+
+## Templates
+
+To create a new wiki, you must have at least one template. I've included, as examples, a basic server edition TiddlyWiki and one loaded with many plugins I find useful. It is perfectly possible to use only the basic server edition template and add plugins to the resulting wiki using the drag and drop approach, but by creating a template, you can create a new empty wiki, easily at any time, that already packs all your favorite plugin goodness. 
 
 ## Creating Templates
 
-A template is a TiddlyWiki .html file configured the way you want it, foundationally, for creating new wikis. The best way to create a new template is to follow the TiddlyWiki NodeJS instructions for building a single file wiki based on one of the editions that ship with the NodeJS implementation (You can look that up on [(http://tiddlywiki.com)]). I suggest you start with the server edition and add plugins by listing them in the plugin.info file before executing: 
+A template is a TiddlyWiki .html file configured the way you want it, foundationally, for creating new wikis. The best way to create a new template is to follow the TiddlyWiki NodeJS instructions for building a single file wiki based on one of the editions that ship with the NodeJS implementation (You can look that up on [tiddlywiki.com(http://tiddlywiki.com)]). I suggest you start with the server edition and add plugins by listing them in the plugin.info file before executing: 
 
 `tiddlywiki mywiki --output <your target dir> --build index`
 
-It is possible to open the resulting index.html file or grab some other existing wiki and run it locally, add plugins to it by drag and drop method (again, look this up on [(http://tiddlywiki.com)]). However, if you take this approach, be aware that the TiddlyWeb plugin is required to operate with a server, rather than as a standalone single file wiki plus one of the many other "saver" methods, and it will not be present in any TiddlyWiki being run as a single HTML file (the server sync mechanism is incompatible with running as a standalone wiki). You'll need to remember to add the TiddlyWeb plugin as the last step to finalize your template wiki. 
+It is possible to open the resulting index.html file or grab some other existing wiki and run it locally, add plugins to it by drag and drop method (again, look this up on [tiddlywiki.com(http://tiddlywiki.com)]). However, if you take this approach, be aware that the TiddlyWeb plugin is required to operate with a server, rather than as a standalone single file wiki plus one of the many other "saver" methods, and it will not be present in any TiddlyWiki being run as a single HTML file (the server sync mechanism is incompatible with running as a standalone wiki). You'll need to remember to add the TiddlyWeb plugin as the last step to finalize your template wiki. 
 
 Once ready, your template file should be added to the templates folder along with a small .txt file containing a sentence or two describing your template, which will be displayed when you are selecting a template from which to build a new wiki. 
 
