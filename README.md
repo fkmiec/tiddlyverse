@@ -25,6 +25,7 @@ NOTE - To be cleaned up, but at the moment, there is a Linux binary included in 
 
 Execute `./tiddlyverse --host <hostname or ip address> <wiki_location>`
 
+- The <wiki_location> should be specified using the file prefix (e.g. `file:///home/user1/tiddlyverse/dist`)
 - You may also optionally specify 
 - `--port <port>` 
 - Various readers, writers and credentials parameters supported by TiddlyBucket (NOTE - These parameters and features have not been tested on this fork of the codebase)
