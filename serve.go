@@ -64,15 +64,15 @@ func (c Credentials) userCanWrite(user string, isAuthenticated bool) bool {
 type HandlerSelector struct {
 	handlerMap map[string]*handlerWithStore
 	store      TiddlerStore
-	//indexCache, faviconCache                        *bytes.Buffer
+	storeFunc  func(path string, requireIndex bool) (TiddlerStore, error)
 }
 
 func NewHandlerSelector() (*HandlerSelector, error) {
 	var storeImpl TiddlerStore
 	var store TiddlerStore
+	var storeFunc func(path string, requireIndex bool) (TiddlerStore, error)
 	var handlerSelector HandlerSelector
 	var err error
-	var storeFunc func(path string, requireIndex bool) (TiddlerStore, error)
 
 	switch storageType {
 
@@ -105,6 +105,7 @@ func NewHandlerSelector() (*HandlerSelector, error) {
 	handlerSelector = HandlerSelector{
 		handlerMap: map[string]*handlerWithStore{},
 		store:      storeImpl,
+		storeFunc:  storeFunc,
 	}
 
 	//Create wikis, templates and trash folders if not already present
@@ -348,6 +349,7 @@ func serverRootIndex(w http.ResponseWriter, r *http.Request) {
 	pageBytes.WriteString("<head>")
 	pageBytes.WriteString("<script>")
 	//pageBytes.WriteString("function deleteWiki(wiki) {\nif(confirm(\"Are you sure you want to delete ' + wiki + '?\") == true) {\nwindow.location.href=\"deleteWiki?name=\" + wiki + \";\n}}")
+	pageBytes.WriteString("function renameWiki(wiki){var newName=prompt(\"Enter a new name for \" + wiki + \":\", wiki); if(newName == null) return; else window.location.href=\"renameWiki?currentName=\" + wiki + \"&newName=\" + newName;}")
 	pageBytes.WriteString("function deleteWiki(wiki){if(confirm(\"Are you sure you want to delete \" + wiki + \"?\") == true) {window.location.href=\"deleteWiki?name=\" + wiki;}}")
 	pageBytes.WriteString("</script>")
 	pageBytes.WriteString("<style>table, th, td { border: 1px solid; border-collapse: collapse; } th, td { padding: 10px; text-align: left; } tr:hover {background-color: #FAFAD2;}</style>")
@@ -359,7 +361,7 @@ func serverRootIndex(w http.ResponseWriter, r *http.Request) {
 	wikis := handlerSelector.getWikiList()
 	for _, wiki := range wikis {
 		//TODO - Finish the delete logic
-		pageBytes.WriteString("<tr><td><a href='" + wiki[0] + "')>" + wiki[0] + "</a></td><td>" + wiki[1] + "</td><td><a href='javascript:deleteWiki(\"" + wiki[0] + "\")'>Delete</a></td></tr>")
+		pageBytes.WriteString("<tr><td><a href='" + wiki[0] + "')>" + wiki[0] + "</a></td><td>" + wiki[1] + "</td><td><a href='javascript:renameWiki(\"" + wiki[0] + "\")'>Rename</a>&nbsp;&nbsp;<a href='javascript:deleteWiki(\"" + wiki[0] + "\")'>Delete</a></td></tr>")
 	}
 	pageBytes.WriteString("</table>")
 	pageBytes.WriteString("<p><a href=\"addWiki\">Click here to create a new wiki</a>")
@@ -462,13 +464,40 @@ func deleteWiki(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	wikiName := r.URL.Query().Get("name")
 	wikiPath := filepath.Join(wikisPath, wikiName)
-	handlerSelector.store.CopyFolder(wikiPath, filepath.Join(trashPath, wikiName)) //FIX THIS - This copies entire root directory structure (but not all the files) from / to the intended wiki folder.
+	handlerSelector.store.CopyFolder(wikiPath, filepath.Join(trashPath, wikiName))
 	handlerSelector.store.DeleteFolder(wikiPath)
 	delete(handlerSelector.handlerMap, wikiName)
 	log.Info().
 		Dur("ellapsed", time.Since(start)).
 		Float64("ellapsed_min", time.Since(start).Minutes()).
 		Msg("sending deleteWiki")
+
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func renameWiki(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	oldWikiName := r.URL.Query().Get("currentName")
+	newWikiName := r.URL.Query().Get("newName")
+	oldWikiPath := filepath.Join(wikisPath, oldWikiName)
+	newWikiPath := filepath.Join(wikisPath, newWikiName)
+
+	handlerSelector.store.CopyFolder(oldWikiPath, newWikiPath)
+	handlerSelector.store.DeleteFolder(oldWikiPath)
+	delete(handlerSelector.handlerMap, oldWikiName)
+
+	store, err := handlerSelector.storeFunc(newWikiPath, true)
+	if err != nil {
+		return
+	}
+	handler := &handlerWithStore{Store: store}
+	handler.setCustomPath(newWikiName)
+	handlerSelector.addHandler(newWikiName, handler)
+
+	log.Info().
+		Dur("ellapsed", time.Since(start)).
+		Float64("ellapsed_min", time.Since(start).Minutes()).
+		Msg("sending renameWiki")
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -1002,6 +1031,7 @@ func ListenAndServe(addr string, credentialsFile string, readers string, writers
 	r.Get("/", serverRootIndex)                              //Load the root index.html page that lists the wikis served by this server and instructs on how to create new ones.
 	r.Get("/addWiki", addWiki)                               //Display a page to enable user to create a new wiki from a template.
 	r.Get("/createNewWiki", createNewWiki)                   //Create the new wiki with name (required) and template (default server edition if omitted).
+	r.Get("/renameWiki", renameWiki)                         //Rename the wiki folder (ie. change the path in the url)
 	r.Get("/deleteWiki", deleteWiki)                         //Delete a wiki. Confirm deletion. Copy to purgatory for some period of time to allow for recovery.
 	r.Get("/{wiki}/login-basic", handlerSelector.loginBasic) //Keep this the same for now. Assume single user. After multiple wikis, consider support for multiple users.
 	r.Get("/{wiki}", handlerSelector.index)                  //Use a named parameter to serve the index for the designated wiki. e.g. "/{wikifolder}". Enable create wiki if does not exist.
