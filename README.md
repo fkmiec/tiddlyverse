@@ -9,7 +9,8 @@ The name Tiddlyverse is a play on universe or multiverse, emphasizing the capabi
   - Each wiki is given a unique path off of the server root. For example, the wiki "~MyWiki" will be at `http://<host>:<port>/MyWiki`. 
 - A landing page at the server root listing all current wikis
   - A link to each wiki
-  - A link to delete a wiki. The delete action is confirmed and the wiki is moved to the "trash" folder on the server. At present, there is no automatic deletion by the server, so you would have to delete it manually. Eventually, the idea is to hold it for some number of days and then purge. 
+  - A link to rename a wiki. The rename action prompts you for a new name. The new name will affect the path in the URL and the folder name on the server. It has no impact on the title used inside the wiki.
+  - A link to delete a wiki. The delete action is confirmed and the wiki is moved to the "trash" folder on the server. At present, there is no automatic deletion by the server, so you would have to delete it manually. 
 - A page for creating a new wiki from a template
   - A template is a TiddlyWiki HTML file with any plugins or content tiddlers that you want to be part of the foundation for a wiki. All subsequent tiddlers will be saved individually in the wiki folder on the server.
 
@@ -60,7 +61,7 @@ You may wish to add a tiddler called **$:/SiteDescription** with a short descrip
 
 ![Home End](/assets/images/home_end.png)
 
-In the listing of wikis, you'll notice a Delete link. You may delete a wiki by clicking that link. It will ask you to confirm and upon confirmation, it will move the wiki to the trash directory. This gives you the chance to change your mind or salvage some tiddlers you may have forgotten you needed. You can permanently delete it later manually on the server. Eventually, I'll add an option to delete after some configurable number of days. 
+In the listing of wikis, you'll notice a Rename and a Delete link. You may rename a wiki, which will change the path in the URL and the folder name on the server. You may also delete a wiki by clicking that link. It will ask you to confirm and upon confirmation, it will move the wiki to the trash directory. This gives you the chance to change your mind or salvage some tiddlers you may have forgotten you needed. You can permanently delete it later manually on the server.  
 
 ## Templates
 
