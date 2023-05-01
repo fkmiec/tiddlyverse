@@ -120,6 +120,7 @@ func (t *TiddlerFile) Read(r io.Reader) error {
 	reader := bufio.NewReader(r)
 	for {
 		line, rerr := reader.ReadString('\n')
+		fmt.Println("DEBUG: " + line)
 		if rerr != nil && rerr != io.EOF {
 			log.Error().Err(rerr).Msg("error reading tiddler line")
 			// TODO: make better error handling

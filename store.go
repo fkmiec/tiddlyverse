@@ -86,6 +86,7 @@ func writeTiddlerToWriter(t Tiddler, tiddlersDir string, index *map[string]strin
 }
 
 func readTiddlerFileWithReadCloser(path string, reader func(path string) (io.ReadCloser, error)) (Tiddler, error) {
+	fmt.Printf("DEBUG: readTiddlerFileWithReadCloser(): %s", path)
 	log.Trace().Str("path", path).Msg("readTiddlerFileWithReadCloser()")
 	f, err := reader(path)
 	if err != nil {
